@@ -3,12 +3,13 @@ import requests
 import time
 import hmac
 import hashlib
-import json
 
 app = Flask(__name__)
 
+# Direkt implementierte MEXC API-Schlüssel (nicht über env)
 API_KEY = "mx0vglDYMDpju8DKxc"
 API_SECRET = "40a163d25d1642bb85f4dd181a63fa00"
+
 BASE_URL = "https://api.mexc.com"
 SYMBOL = "BTCUSDT"
 TICK_SIZE = 0.01  # BTCUSDT Spot Tickgröße
@@ -52,10 +53,9 @@ def webhook():
         response = place_limit_order(limit_price)
         return jsonify(response)
     elif data.get("side") == "close":
-        return jsonify({"message": "Close signal received (logic pending)"})
+        return jsonify({"message": "Close signal received (implement sell logic)"})
     return jsonify({"error": "Invalid data"}), 400
 
 if __name__ == "__main__":
-    app.run(debug=True)
-
+    app.run(host="0.0.0.0", port=10000, debug=True)
 
