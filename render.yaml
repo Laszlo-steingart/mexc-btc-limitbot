@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: mexc-btc-limitbot
+    env: python
+    repo: https://github.com/Laszlo-steingart/mexc-btc-limitbot
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: free
+
