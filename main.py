@@ -6,13 +6,13 @@ import hashlib
 
 app = Flask(__name__)
 
-# Direkt implementierte MEXC API-Schlüssel (nicht über env)
+# Feste API-Keys direkt im Code (nicht empfohlen für Produktion)
 API_KEY = "mx0vglDYMDpju8DKxc"
 API_SECRET = "40a163d25d1642bb85f4dd181a63fa00"
 
 BASE_URL = "https://api.mexc.com"
-SYMBOL = "BTCUSDT"
-TICK_SIZE = 0.01  # BTCUSDT Spot Tickgröße
+SYMBOL = "XRPUSDT"
+TICK_SIZE = 0.0001  # XRP Tickgröße prüfen und ggf. anpassen
 
 def sign(params):
     query = '&'.join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -35,13 +35,16 @@ def place_limit_order(price):
         "side": "BUY",
         "type": "LIMIT",
         "timeInForce": "GTC",
-        "quantity": "0.001",
-        "price": f"{price:.2f}",
+        "quantity": "20",  # Beispielgröße für XRP
+        "price": f"{price:.4f}",
         "timestamp": timestamp
     }
     params["signature"] = sign(params)
     headers = { "X-MEXC-APIKEY": API_KEY }
+
     r = requests.post(url, params=params, headers=headers)
+    print("ORDER PARAMS:", params)
+    print("RESPONSE:", r.status_code, r.text)
     return r.json()
 
 @app.route("/webhook", methods=["POST"])
@@ -49,11 +52,11 @@ def webhook():
     data = request.get_json()
     if data.get("side") == "buy":
         current_price = get_price()
-        limit_price = round(current_price - 2 * TICK_SIZE, 2)
+        limit_price = round(current_price - 2 * TICK_SIZE, 4)
         response = place_limit_order(limit_price)
         return jsonify(response)
     elif data.get("side") == "close":
-        return jsonify({"message": "Close signal received (implement sell logic)"})
+        return jsonify({"message": "Close signal received (logic not implemented)"})
     return jsonify({"error": "Invalid data"}), 400
 
 if __name__ == "__main__":
