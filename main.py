@@ -1,69 +1,71 @@
+from flask import Flask, request, jsonify
+import requests
 import time
 import hmac
 import hashlib
-import requests
-from flask import Flask, request, jsonify
-from urllib.parse import urlencode
 
 app = Flask(__name__)
 
-# Deine echten API-Keys
-api_key = 'mx0vgl8knwgL7bF14c'
-api_secret = '921a17445d864768854f0d39a3667d38'
+API_KEY = 'mx0vgl8knwgL7bF14c'
+API_SECRET = '921a17445d864768854f0d39a3667d38'
 
-def get_usdc_balance():
-    timestamp = int(time.time() * 1000)
-    query_string = f"timestamp={timestamp}"
-    signature = hmac.new(api_secret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
-    headers = {"X-MEXC-APIKEY": api_key}
-    url = f"https://api.mexc.com/api/v3/account?{query_string}&signature={signature}"
-    res = requests.get(url, headers=headers).json()
-    for asset in res.get("balances", []):
-        if asset["asset"] == "USDC":
-            return float(asset["free"])
-    return 0.0
+BASE_URL = 'https://api.mexc.com'
+SYMBOL = 'SOLUSDT'
 
-def place_limit_order(symbol, side):
-    balance = get_usdc_balance()
-    if balance <= 0:
-        return {"error": "No USDC balance"}
+def get_headers(query_string):
+    timestamp = str(int(time.time() * 1000))
+    signature = hmac.new(
+        API_SECRET.encode(),
+        (query_string + "&timestamp=" + timestamp).encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return {
+        'Content-Type': 'application/json',
+        'ApiKey': API_KEY
+    }, signature, timestamp
 
-    price = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol}").json()
-    price = float(price["price"])
-    limit_price = round(price * 0.995, 2) if side == "BUY" else round(price * 1.005, 2)
-    quantity = round(balance / limit_price, 6)
+def get_price():
+    url = f'{BASE_URL}/api/v3/ticker/price?symbol={SYMBOL}'
+    response = requests.get(url)
+    return float(response.json()['price'])
 
-    params = {
-        "symbol": symbol,
-        "side": side,
-        "type": "LIMIT",
-        "timeInForce": "GTC",
-        "quantity": quantity,
-        "price": limit_price,
-        "timestamp": int(time.time() * 1000)
-    }
+def get_balance(asset):
+    url = f'{BASE_URL}/api/v3/account'
+    query_string = f'recvWindow=5000'
+    headers, signature, timestamp = get_headers(query_string)
+    query = f'{query_string}&timestamp={timestamp}&signature={signature}'
+    response = requests.get(f'{url}?{query}', headers=headers)
+    balances = response.json()['balances']
+    for b in balances:
+        if b['asset'] == asset:
+            return float(b['free'])
+    return 0
 
-    query_string = urlencode(params)
-    signature = hmac.new(api_secret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
-    params["signature"] = signature
+def place_limit_order(side):
+    balance = get_balance('USDT')
+    if balance < 1:
+        return {'error': 'Insufficient balance'}
 
-    headers = {
-        "X-MEXC-APIKEY": api_key,
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    current_price = get_price()
+    limit_price = round(current_price - 0.002, 3)
+    qty = round(balance / limit_price, 2)
 
-    response = requests.post("https://api.mexc.com/api/v3/order", data=params, headers=headers)
+    url = f'{BASE_URL}/api/v3/order'
+    query_string = f'symbol={SYMBOL}&side={side.upper()}&type=LIMIT&timeInForce=GTC&quantity={qty}&price={limit_price}&recvWindow=5000'
+    headers, signature, timestamp = get_headers(query_string)
+    query = f'{query_string}&timestamp={timestamp}&signature={signature}'
+    response = requests.post(f'{url}?{query}', headers=headers)
     return response.json()
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.json
-    if "side" not in data:
-        return jsonify({"error": "Missing side"}), 400
-    symbol = "ETHUSDC"
-    result = place_limit_order(symbol, data["side"].upper())
+    data = request.get_json()
+    side = data.get('side')
+    if side not in ['buy', 'sell']:
+        return jsonify({'error': 'Invalid side'}), 400
+    result = place_limit_order(side)
     return jsonify(result)
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=10000)
+if __name__ == '__main__':
+    app.run(debug=True, port=10000)
 
