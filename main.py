@@ -1,70 +1,81 @@
+import time
+import hmac
+import hashlib
+import requests
 from flask import Flask, request, jsonify
-import hmac, hashlib, time, requests
 
 app = Flask(__name__)
 
 API_KEY = "mx0vgl8knwgL7bF14c"
 API_SECRET = "921a17445d864768854f0d39a3667d38"
-SYMBOL = "ETHUSDC"
-
 BASE_URL = "https://api.mexc.com"
+symbol = "ETHUSDC"
 
-def sign_request(params):
-    query_string = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
-    signature = hmac.new(API_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
-    return query_string + f"&signature={signature}"
+def get_timestamp():
+    return str(int(time.time() * 1000))
 
-def get_available_usdc_balance():
-    timestamp = int(time.time() * 1000)
-    query = f"timestamp={timestamp}"
-    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-    headers = {"X-MEXC-APIKEY": API_KEY}
-    url = f"{BASE_URL}/api/v3/account?{query}&signature={signature}"
-    res = requests.get(url, headers=headers)
-    balances = res.json().get("balances", [])
-    for asset in balances:
-        if asset["asset"] == "USDC":
-            return float(asset["free"])
+def get_headers(query_string):
+    signature = hmac.new(
+        bytes(API_SECRET, "utf-8"),
+        bytes(query_string, "utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "ApiKey": API_KEY,
+        "Request-Time": get_timestamp(),
+        "Signature": signature
+    }
+
+def get_balance(asset):
+    timestamp = get_timestamp()
+    query_string = f"timestamp={timestamp}"
+    headers = get_headers(query_string)
+    url = f"{BASE_URL}/api/v3/account?{query_string}"
+    response = requests.get(url, headers=headers)
+    balances = response.json().get("balances", [])
+    for b in balances:
+        if b["asset"] == asset:
+            return float(b["free"])
     return 0.0
 
-def place_limit_buy(symbol, quantity, price):
-    timestamp = int(time.time() * 1000)
+def get_price(symbol):
+    url = f"{BASE_URL}/api/v3/ticker/price?symbol={symbol}"
+    response = requests.get(url)
+    return response.json()["price"]
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    side = data.get("side")
+
+    if side not in ["buy", "sell"]:
+        return jsonify({"error": "Invalid side"}), 400
+
+    usdt_balance = get_balance("USDC")
+    if usdt_balance <= 0:
+        return jsonify({"error": "No balance"}), 400
+
+    price = float(get_price(symbol))
+    limit_price = round(price - 0.01, 2) if side == "buy" else round(price + 0.01, 2)
+    quantity = round(usdt_balance / price, 6)
+
     params = {
         "symbol": symbol,
-        "side": "BUY",
+        "side": side.upper(),
         "type": "LIMIT",
-        "timeInForce": "GTC",
         "quantity": quantity,
-        "price": price,
-        "timestamp": timestamp
+        "price": str(limit_price),
+        "timeInForce": "GTC",
+        "timestamp": get_timestamp()
     }
-    signed = sign_request(params)
-    headers = {"X-MEXC-APIKEY": API_KEY}
-    url = f"{BASE_URL}/api/v3/order?{signed}"
-    return requests.post(url, headers=headers)
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    if not data or data.get("side") != "buy":
-        return jsonify({"error": "Invalid payload"}), 400
+    query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+    headers = get_headers(query_string)
+    url = f"{BASE_URL}/api/v3/order"
+    response = requests.post(url, headers=headers, params=params)
+    return jsonify(response.json())
 
-    try:
-        ticker = requests.get(f"{BASE_URL}/api/v3/ticker/bookTicker?symbol={SYMBOL}").json()
-        ask_price = float(ticker["askPrice"])
-        limit_price = round(ask_price * 0.998, 2)
-
-        usdc_balance = get_available_usdc_balance()
-        if usdc_balance < 5:
-            return jsonify({"error": "Not enough balance"}), 400
-
-        quantity = round(usdc_balance / limit_price, 5)
-        res = place_limit_buy(SYMBOL, quantity, limit_price)
-        return jsonify(res.json())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/')
-def index():
-    return 'MEXC Webhook Bot Active'
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=10000)
 
