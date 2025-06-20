@@ -10,39 +10,32 @@ app = Flask(__name__)
 API_KEY = "mx0vgl8knwgL7bF14c"
 API_SECRET = "921a17445d864768854f0d39a3667d38"
 BASE_URL = "https://api.mexc.com"
-SYMBOL = "XRPUSDT"
 
-def get_headers():
-    return {
-        "X-MEXC-APIKEY": API_KEY
-    }
-
-def sign_params(params):
-    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-    signature = hmac.new(API_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-    return signature
+SYMBOL = "BTCUSDT"
 
 def get_balance():
-    path = "/api/v3/account"
     timestamp = int(time.time() * 1000)
-    params = {"timestamp": timestamp}
-    params["signature"] = sign_params(params)
-    r = requests.get(BASE_URL + path, headers=get_headers(), params=params)
+    query = f"timestamp={timestamp}"
+    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    headers = { "X-MEXC-APIKEY": API_KEY }
+    url = f"{BASE_URL}/api/v3/account?{query}&signature={signature}"
+    r = requests.get(url, headers=headers)
     assets = r.json().get("balances", [])
-    usdt_balance = next((a for a in assets if a["asset"] == "USDT"), {"free": "0"})["free"]
-    return float(usdt_balance)
+    usdt = next((a for a in assets if a["asset"] == "USDT"), None)
+    return float(usdt["free"]) if usdt else 0
 
 def get_price():
-    path = f"/api/v3/ticker/price"
-    r = requests.get(BASE_URL + path, params={"symbol": SYMBOL})
+    url = f"{BASE_URL}/api/v3/ticker/price?symbol={SYMBOL}"
+    r = requests.get(url)
     return float(r.json()["price"])
 
 def place_order(side):
     balance = get_balance()
     price = get_price()
-    qty = round(balance / price, 1)  # XRP often allows 1 decimal
+    qty = round(balance / price, 6)
+    if qty <= 0:
+        return {"error": "Not enough USDT balance"}, 400
 
-    path = "/api/v3/order"
     timestamp = int(time.time() * 1000)
     params = {
         "symbol": SYMBOL,
@@ -51,8 +44,12 @@ def place_order(side):
         "quantity": qty,
         "timestamp": timestamp
     }
-    params["signature"] = sign_params(params)
-    r = requests.post(BASE_URL + path, headers=get_headers(), params=params)
+    query = '&'.join([f"{k}={v}" for k, v in params.items()])
+    signature = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    params["signature"] = signature
+    headers = { "X-MEXC-APIKEY": API_KEY }
+
+    r = requests.post(f"{BASE_URL}/api/v3/order", headers=headers, params=params)
     return r.json()
 
 @app.route("/webhook", methods=["POST"])
