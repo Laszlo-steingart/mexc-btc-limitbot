@@ -1,77 +1,78 @@
-import os
 import hmac
 import hashlib
 import time
-import json
 import requests
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Fixe API Keys (manuell eingefügt, nicht aus ENV)
 API_KEY = "mx0vgl8knwgL7bF14c"
 API_SECRET = "921a17445d864768854f0d39a3667d38"
+BASE_URL = "https://api.mexc.com"
+SYMBOL = "SOLUSDT"
 
-symbol = "SOLUSDT"
+def get_timestamp():
+    return str(int(time.time() * 1000))
 
-def get_server_time():
-    return int(time.time() * 1000)
+def sign_request(params, secret):
+    query_string = '&'.join([f"{key}={value}" for key, value in 
+sorted(params.items())])
+    signature = hmac.new(secret.encode('utf-8'), 
+query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+    return signature
 
-def sign_request(params):
-    query_string = '&'.join([f"{k}={params[k]}" for k in sorted(params)])
-    signature = hmac.new(
-        API_SECRET.encode('utf-8'),
-        query_string.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    return f"{query_string}&signature={signature}"
-
-def get_available_balance(asset):
-    url = "https://api.mexc.com/api/v3/account"
-    timestamp = get_server_time()
-    query = {
-        "timestamp": timestamp
-    }
-    signed_query = sign_request(query)
+def get_balance(asset):
+    path = "/api/v3/account"
+    timestamp = get_timestamp()
+    params = {"timestamp": timestamp}
+    params["signature"] = sign_request(params, API_SECRET)
     headers = {"X-MEXC-APIKEY": API_KEY}
-    response = requests.get(f"{url}?{signed_query}", headers=headers)
+    response = requests.get(BASE_URL + path, headers=headers, 
+params=params)
     balances = response.json().get("balances", [])
     for b in balances:
         if b["asset"] == asset:
             return float(b["free"])
     return 0.0
 
-def place_limit_buy_order(symbol, price, quantity):
-    url = "https://api.mexc.com/api/v3/order"
-    timestamp = get_server_time()
+def place_order(symbol, side, quantity):
+    path = "/api/v3/order"
+    timestamp = get_timestamp()
     params = {
         "symbol": symbol,
-        "side": "BUY",
+        "side": side.upper(),
         "type": "LIMIT",
         "timeInForce": "GTC",
         "quantity": quantity,
-        "price": price,
+        "price": get_limit_price(symbol, side),
         "timestamp": timestamp
     }
-    signed_query = sign_request(params)
+    params["signature"] = sign_request(params, API_SECRET)
     headers = {"X-MEXC-APIKEY": API_KEY}
-    response = requests.post(url, headers=headers, data=signed_query)
-    return response.json()
+    return requests.post(BASE_URL + path, headers=headers, 
+params=params).json()
+
+def get_limit_price(symbol, side):
+    depth = requests.get(f"{BASE_URL}/api/v3/depth", params={"symbol": 
+symbol, "limit": 5}).json()
+    if side.lower() == "buy":
+        return str(round(float(depth["asks"][0][0]) - 0.001, 4))
+    else:
+        return str(round(float(depth["bids"][0][0]) + 0.001, 4))
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    if data["side"] == "buy":
-        usdt_balance = get_available_balance("USDT")
-        ticker = requests.get(f"https://api.mexc.com/api/v3/ticker/bookTicker?symbol={symbol}").json()
-        ask_price = float(ticker["askPrice"])
-        price = round(ask_price - 0.002, 4)
-        quantity = round(usdt_balance / price, 3)
-        response = place_limit_buy_order(symbol, price, quantity)
-        return jsonify(response)
-    return jsonify({"status": "ignored"})
+    side = data.get("side")
+    usdt_balance = get_balance("USDT")
+    if usdt_balance <= 0:
+        return jsonify({"error": "No USDT balance"}), 400
+
+    price = float(get_limit_price(SYMBOL, side))
+    quantity = round(usdt_balance / price, 3)
+    result = place_order(SYMBOL, side, quantity)
+    return jsonify(result)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(debug=True, host="0.0.0.0", port=10000)
 
