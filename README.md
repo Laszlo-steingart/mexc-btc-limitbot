@@ -1,1 +1,0 @@
-# MEXC BTCUSDT Webhook Bot
