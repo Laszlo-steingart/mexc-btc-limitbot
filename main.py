@@ -3,8 +3,8 @@ import time, hmac, hashlib, requests, sys
 
 app = Flask(__name__)
 
-API_KEY = 'mx0vgL8knwgL7bF14c'
-API_SECRET = '921a17445d864768854f0d39a3667d38'
+API_KEY = 'mx0vgle6oc8ay5iiNK'
+API_SECRET = '0f7ca5615bea483abfb971e11cee81ac'
 BASE_URL = 'https://api.mexc.com'
 SYMBOL = 'XRPUSDT'
 TICK_SIZE = 0.0001
