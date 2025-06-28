@@ -24,6 +24,8 @@ def get_balance(asset):
     sig = get_sign(query)
     headers = {"X-MEXC-APIKEY": API_KEY}
     r = requests.get(f"{BASE_URL}/api/v3/account?{query}&signature={sig}", headers=headers)
+    print("DEBUG BALANCES RESPONSE:", r.json())  # Debug-Ausgabe
+    sys.stdout.flush()
     for i in r.json().get("balances", []):
         if i["asset"] == asset:
             return float(i["free"])
@@ -33,6 +35,9 @@ def place_limit_buy():
     bid, _ = get_orderbook()
     price = round(bid - 2 * TICK_SIZE, 6)
     usdt = get_balance("USDT")
+    if usdt < 1.01:
+        return {"error": "No USDT balance"}
+
     qty = round(usdt / price, 1)
 
     ts = int(time.time() * 1000)
