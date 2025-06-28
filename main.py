@@ -1,72 +1,85 @@
 from flask import Flask, request
-import time, hmac, hashlib, requests
+import time, hmac, hashlib, requests, sys
 
 app = Flask(__name__)
 
 API_KEY = 'mx0vgI8knwgL7bF14c'
 API_SECRET = '921a17445d864768854f0d39a3667d38'
+BASE_URL = 'https://api.mexc.com'
 SYMBOL = 'XRPUSDT'
 TICK_SIZE = 0.0001
-BASE_URL = 'https://api.mexc.com'
 
-def sign(params):
-    query = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-    sig = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-    return f"{query}&signature={sig}"
+def get_sign(query):
+    return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-def get_headers():
-    return {"X-MEXC-APIKEY": API_KEY}
-
-def get_best_price():
-    res = requests.get(f"{BASE_URL}/api/v3/depth", params={"symbol": SYMBOL, "limit": 5}).json()
-    best_bid = float(res['bids'][0][0])
-    best_ask = float(res['asks'][0][0])
-    return best_bid, best_ask
+def get_orderbook():
+    r = requests.get(BASE_URL + "/api/v3/depth", params={"symbol": SYMBOL, "limit": 5}).json()
+    bid = float(r["bids"][0][0])
+    ask = float(r["asks"][0][0])
+    return bid, ask
 
 def get_balance(asset):
-    timestamp = int(time.time() * 1000)
-    params = {"timestamp": timestamp}
-    url = f"{BASE_URL}/api/v3/account?" + sign(params)
-    res = requests.get(url, headers=get_headers()).json()
-    for b in res.get("balances", []):
-        if b["asset"] == asset:
-            return float(b["free"])
+    ts = int(time.time() * 1000)
+    query = f"timestamp={ts}&recvWindow=5000"
+    sig = get_sign(query)
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.get(f"{BASE_URL}/api/v3/account?{query}&signature={sig}", headers=headers)
+    for i in r.json().get("balances", []):
+        if i["asset"] == asset:
+            return float(i["free"])
     return 0.0
 
-def place_limit_order(side):
-    best_bid, best_ask = get_best_price()
-    timestamp = int(time.time() * 1000)
+def place_limit_buy():
+    bid, _ = get_orderbook()
+    price = round(bid - 2 * TICK_SIZE, 6)
+    usdt = get_balance("USDT")
+    qty = round(usdt / price, 1)
 
-    if side == "buy":
-        price = round(best_bid - 2 * TICK_SIZE, 6)
-        usdt_balance = get_balance("USDT")
-        qty = round(usdt_balance / price, 1)
-    else:
-        price = round(best_ask + 2 * TICK_SIZE, 6)
-        qty = round(get_balance("XRP"), 1)
-
+    ts = int(time.time() * 1000)
     params = {
-        "symbol": SYMBOL,
-        "side": side.upper(),
-        "type": "LIMIT",
-        "timeInForce": "GTC",
-        "quantity": qty,
-        "price": price,
-        "timestamp": timestamp
+        "symbol": SYMBOL, "side": "BUY", "type": "LIMIT",
+        "quantity": qty, "price": price, "timeInForce": "GTC",
+        "recvWindow": 5000, "timestamp": ts
     }
+    query = '&'.join([f"{k}={v}" for k, v in params.items()])
+    params["signature"] = get_sign(query)
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=headers).json()
+    print("BUY RESPONSE:", r)
+    sys.stdout.flush()
+    return r
 
-    url = f"{BASE_URL}/api/v3/order?" + sign(params)
-    return requests.post(url, headers=get_headers()).json()
+def place_market_sell():
+    qty = round(get_balance("XRP"), 1)
+    if qty < 1:
+        return {"error": "Not enough XRP to sell"}
 
-@app.route('/webhook', methods=['POST'])
+    ts = int(time.time() * 1000)
+    params = {
+        "symbol": SYMBOL, "side": "SELL", "type": "MARKET",
+        "quantity": qty, "recvWindow": 5000, "timestamp": ts
+    }
+    query = '&'.join([f"{k}={v}" for k, v in params.items()])
+    params["signature"] = get_sign(query)
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=headers).json()
+    print("SELL RESPONSE:", r)
+    sys.stdout.flush()
+    return r
+
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    if not data or 'side' not in data:
-        return {"error": "missing 'side'"}, 400
-    side = data['side'].lower()
-    if side not in ['buy', 'sell']:
-        return {"error": "invalid side"}, 400
-    return place_limit_order(side)
+    data = request.get_json()
+    if not data or "side" not in data:
+        return {"error": "Missing 'side'"}, 400
+
+    if data["side"].lower() == "buy":
+        return place_limit_buy()
+
+    if data["side"].lower() == "sell":
+        return place_market_sell()
+
+    return {"error": "Invalid side"}, 400
 
 if __name__ == '__main__':
     app.run(debug=False)
