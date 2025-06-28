@@ -1,78 +1,73 @@
-import hmac
-import hashlib
-import time
-import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request
+import time, hmac, hashlib, requests
 
 app = Flask(__name__)
 
-API_KEY = "mx0vgl8knwgL7bF14c"
-API_SECRET = "921a17445d864768854f0d39a3667d38"
-BASE_URL = "https://api.mexc.com"
-SYMBOL = "SOLUSDT"
+API_KEY = 'mx0vgI8knwgL7bF14c'
+API_SECRET = '921a17445d864768854f0d39a3667d38'
+SYMBOL = 'XRPUSDT'
+TICK_SIZE = 0.0001
+BASE_URL = 'https://api.mexc.com'
 
-def get_timestamp():
-    return str(int(time.time() * 1000))
+def sign(params):
+    query = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+    sig = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    return f"{query}&signature={sig}"
 
-def sign_request(params, secret):
-    query_string = '&'.join([f"{key}={value}" for key, value in 
-sorted(params.items())])
-    signature = hmac.new(secret.encode('utf-8'), 
-query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-    return signature
+def get_headers():
+    return {"X-MEXC-APIKEY": API_KEY}
+
+def get_best_price():
+    res = requests.get(f"{BASE_URL}/api/v3/depth", params={"symbol": SYMBOL, "limit": 5}).json()
+    best_bid = float(res['bids'][0][0])
+    best_ask = float(res['asks'][0][0])
+    return best_bid, best_ask
 
 def get_balance(asset):
-    path = "/api/v3/account"
-    timestamp = get_timestamp()
+    timestamp = int(time.time() * 1000)
     params = {"timestamp": timestamp}
-    params["signature"] = sign_request(params, API_SECRET)
-    headers = {"X-MEXC-APIKEY": API_KEY}
-    response = requests.get(BASE_URL + path, headers=headers, 
-params=params)
-    balances = response.json().get("balances", [])
-    for b in balances:
+    url = f"{BASE_URL}/api/v3/account?" + sign(params)
+    res = requests.get(url, headers=get_headers()).json()
+    for b in res.get("balances", []):
         if b["asset"] == asset:
             return float(b["free"])
     return 0.0
 
-def place_order(symbol, side, quantity):
-    path = "/api/v3/order"
-    timestamp = get_timestamp()
+def place_limit_order(side):
+    best_bid, best_ask = get_best_price()
+    timestamp = int(time.time() * 1000)
+
+    if side == "buy":
+        price = round(best_bid - 2 * TICK_SIZE, 6)
+        usdt_balance = get_balance("USDT")
+        qty = round(usdt_balance / price, 1)
+    else:
+        price = round(best_ask + 2 * TICK_SIZE, 6)
+        qty = round(get_balance("XRP"), 1)
+
     params = {
-        "symbol": symbol,
+        "symbol": SYMBOL,
         "side": side.upper(),
         "type": "LIMIT",
         "timeInForce": "GTC",
-        "quantity": quantity,
-        "price": get_limit_price(symbol, side),
+        "quantity": qty,
+        "price": price,
         "timestamp": timestamp
     }
-    params["signature"] = sign_request(params, API_SECRET)
-    headers = {"X-MEXC-APIKEY": API_KEY}
-    return requests.post(BASE_URL + path, headers=headers, 
-params=params).json()
 
-def get_limit_price(symbol, side):
-    depth = requests.get(f"{BASE_URL}/api/v3/depth", params={"symbol": 
-symbol, "limit": 5}).json()
-    if side.lower() == "buy":
-        return str(round(float(depth["asks"][0][0]) - 0.001, 4))
-    else:
-        return str(round(float(depth["bids"][0][0]) + 0.001, 4))
+    url = f"{BASE_URL}/api/v3/order?" + sign(params)
+    return requests.post(url, headers=get_headers()).json()
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    side = data.get("side")
-    usdt_balance = get_balance("USDT")
-    if usdt_balance <= 0:
-        return jsonify({"error": "No USDT balance"}), 400
+    if not data or 'side' not in data:
+        return {"error": "missing 'side'"}, 400
+    side = data['side'].lower()
+    if side not in ['buy', 'sell']:
+        return {"error": "invalid side"}, 400
+    return place_limit_order(side)
 
-    price = float(get_limit_price(SYMBOL, side))
-    quantity = round(usdt_balance / price, 3)
-    result = place_order(SYMBOL, side, quantity)
-    return jsonify(result)
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=10000)
+if __name__ == '__main__':
+    app.run(debug=False)
 
