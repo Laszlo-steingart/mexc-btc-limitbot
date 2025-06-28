@@ -37,7 +37,7 @@ def get_balance(asset):
 def place_limit_buy():
     bid, _ = get_orderbook()
     price = round(bid - 2 * TICK_SIZE, 6)
-    qty = 0.1  # Feste Positionsgröße
+    qty = 3  # Feste Positionsgröße: 3 XRP
 
     ts = int(time.time() * 1000)
     params = {
