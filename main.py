@@ -24,7 +24,7 @@ def get_balance(asset):
     sig = get_sign(query)
     headers = {"X-MEXC-APIKEY": API_KEY}
     r = requests.get(f"{BASE_URL}/api/v3/account?{query}&signature={sig}", headers=headers)
-    print("DEBUG BALANCES RESPONSE:", r.json())  # Debug-Ausgabe
+    print("DEBUG BALANCES RESPONSE:", r.json())
     sys.stdout.flush()
     for i in r.json().get("balances", []):
         if i["asset"] == asset:
@@ -34,11 +34,7 @@ def get_balance(asset):
 def place_limit_buy():
     bid, _ = get_orderbook()
     price = round(bid - 2 * TICK_SIZE, 6)
-    usdt = get_balance("USDT")
-    if usdt < 1.01:
-        return {"error": "No USDT balance"}
-
-    qty = round(usdt / price, 1)
+    qty = 0.1  # Feste Positionsgröße
 
     ts = int(time.time() * 1000)
     params = {
@@ -56,7 +52,7 @@ def place_limit_buy():
 
 def place_market_sell():
     qty = round(get_balance("XRP"), 1)
-    if qty < 1:
+    if qty < 0.1:
         return {"error": "Not enough XRP to sell"}
 
     ts = int(time.time() * 1000)
