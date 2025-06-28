@@ -3,7 +3,7 @@ import time, hmac, hashlib, requests, sys
 
 app = Flask(__name__)
 
-API_KEY = 'mx0vgI8knwgL7bF14c'
+API_KEY = 'mx0vgL8knwgL7bF14c'
 API_SECRET = '921a17445d864768854f0d39a3667d38'
 BASE_URL = 'https://api.mexc.com'
 SYMBOL = 'XRPUSDT'
