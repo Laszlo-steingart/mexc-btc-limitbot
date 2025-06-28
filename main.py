@@ -23,7 +23,10 @@ def get_balance(asset):
     query = f"timestamp={ts}&recvWindow=5000"
     sig = get_sign(query)
     headers = {"X-MEXC-APIKEY": API_KEY}
-    r = requests.get(f"{BASE_URL}/api/v3/account?{query}&signature={sig}", headers=headers)
+    url = f"{BASE_URL}/api/v3/account?{query}&signature={sig}"
+    r = requests.get(url, headers=headers)
+    print("DEBUG RAW URL:", url)
+    print("DEBUG HEADERS:", headers)
     print("DEBUG BALANCES RESPONSE:", r.json())
     sys.stdout.flush()
     for i in r.json().get("balances", []):
@@ -83,5 +86,5 @@ def webhook():
     return {"error": "Invalid side"}, 400
 
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(host='0.0.0.0', port=10000)
 
