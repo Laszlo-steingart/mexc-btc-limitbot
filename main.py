@@ -8,13 +8,10 @@ API_SECRET = '0f7ca5615bea483abfb971e11cee81ac'
 BASE_URL = 'https://api.mexc.com'
 SYMBOL = 'XRPUSDT'
 TICK_SIZE = 0.0001
-LIMIT_ORDER_FILE = "limit_order.json"
+ORDER_FILE = "limit_order.json"
 
 def get_sign(query):
     return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-
-def get_headers():
-    return {"X-MEXC-APIKEY": API_KEY}
 
 def get_orderbook():
     r = requests.get(BASE_URL + "/api/v3/depth", params={"symbol": SYMBOL, "limit": 5}).json()
@@ -26,30 +23,28 @@ def get_balance(asset):
     ts = int(time.time() * 1000)
     query = f"timestamp={ts}&recvWindow=5000"
     sig = get_sign(query)
+    headers = {"X-MEXC-APIKEY": API_KEY}
     url = f"{BASE_URL}/api/v3/account?{query}&signature={sig}"
-    r = requests.get(url, headers=get_headers())
-    print("DEBUG BALANCES RESPONSE:", r.json())
-    sys.stdout.flush()
+    r = requests.get(url, headers=headers)
     for i in r.json().get("balances", []):
         if i["asset"] == asset:
             return float(i["free"])
     return 0.0
 
-def save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f)
+def save_order_id(order_id):
+    json.dump({"order_id": order_id}, open(ORDER_FILE, "w"))
 
-def load_json(path):
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return {}
+def load_order_id():
+    if not os.path.exists(ORDER_FILE): return None
+    try:
+        return json.load(open(ORDER_FILE)).get("order_id")
+    except:
+        return None
 
-def delete_json(path):
-    if os.path.exists(path):
-        os.remove(path)
-
-def cancel_limit_order(order_id):
+def cancel_existing_limit_order():
+    order_id = load_order_id()
+    if not order_id:
+        return
     ts = int(time.time() * 1000)
     params = {
         "symbol": SYMBOL,
@@ -59,13 +54,16 @@ def cancel_limit_order(order_id):
     }
     query = '&'.join([f"{k}={v}" for k, v in params.items()])
     params["signature"] = get_sign(query)
-    r = requests.delete(BASE_URL + "/api/v3/order", params=params, headers=get_headers())
-    print("LIMIT ORDER CANCELED:", r.json())
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.delete(BASE_URL + "/api/v3/order", params=params, headers=headers).json()
+    print("CANCEL RESPONSE:", r)
     sys.stdout.flush()
+    if os.path.exists(ORDER_FILE):
+        os.remove(ORDER_FILE)
 
 def place_limit_buy():
     bid, _ = get_orderbook()
-    price = round(bid - 2 * TICK_SIZE, 6)
+    price = round(bid, 6)  # exakter Markpreis
     qty = 3
 
     ts = int(time.time() * 1000)
@@ -76,22 +74,17 @@ def place_limit_buy():
     }
     query = '&'.join([f"{k}={v}" for k, v in params.items()])
     params["signature"] = get_sign(query)
-    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=get_headers()).json()
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=headers).json()
     print("BUY RESPONSE:", r)
     sys.stdout.flush()
 
     if "orderId" in r:
-        save_json(LIMIT_ORDER_FILE, {"orderId": r["orderId"]})
-
+        save_order_id(r["orderId"])
     return r
 
 def place_market_sell():
-    # Wenn offene BUY-Limit-Order existiert → canceln
-    existing = load_json(LIMIT_ORDER_FILE)
-    if "orderId" in existing:
-        cancel_limit_order(existing["orderId"])
-        delete_json(LIMIT_ORDER_FILE)
-
+    cancel_existing_limit_order()
     qty = round(get_balance("XRP"), 1)
     if qty < 0.1:
         return {"error": "Not enough XRP to sell"}
@@ -103,7 +96,8 @@ def place_market_sell():
     }
     query = '&'.join([f"{k}={v}" for k, v in params.items()])
     params["signature"] = get_sign(query)
-    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=get_headers()).json()
+    headers = {"X-MEXC-APIKEY": API_KEY}
+    r = requests.post(BASE_URL + "/api/v3/order", params=params, headers=headers).json()
     print("SELL RESPONSE:", r)
     sys.stdout.flush()
     return r
@@ -116,7 +110,6 @@ def webhook():
 
     if data["side"].lower() == "buy":
         return place_limit_buy()
-
     if data["side"].lower() == "sell":
         return place_market_sell()
 
